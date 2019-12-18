@@ -205,7 +205,7 @@ class SchemaFactory
 
             $cache = function_exists('apcu_fetch') ? new ApcuCache() : new PhpFileCache(sys_get_temp_dir() . '/graphqlite.' . crc32(__DIR__));
 
-            $namespace = substr(md5(Versions::getVersion('thecodingmachine/graphqlite')), 0, 8);
+            $namespace = substr(md5(Versions::getVersion('rentpost/graphqlite')), 0, 8);
             $cache->setNamespace($namespace);
 
             $doctrineAnnotationReader = new CachedReader($doctrineAnnotationReader, $cache, true);
