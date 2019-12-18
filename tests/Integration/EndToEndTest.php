@@ -9,7 +9,9 @@ use Mouf\Picotainer\Picotainer;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use stdClass;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Cache\Adapter\Psr16Adapter;
+use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Cache\Simple\ArrayCache;
 use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 use TheCodingMachine\GraphQLite\AnnotationReader;
@@ -29,7 +31,11 @@ use TheCodingMachine\GraphQLite\Mappers\RecursiveTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\RecursiveTypeMapperInterface;
 use TheCodingMachine\GraphQLite\Mappers\Root\BaseTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\Root\CompositeRootTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\CompoundTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\FinalRootTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\IteratorTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\Root\MyCLabsEnumTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\NullableTypeMapperAdapter;
 use TheCodingMachine\GraphQLite\Mappers\Root\RootTypeMapperInterface;
 use TheCodingMachine\GraphQLite\Mappers\TypeMapperInterface;
 use TheCodingMachine\GraphQLite\Middlewares\AuthorizationFieldMiddleware;
@@ -77,11 +83,11 @@ class EndToEndTest extends TestCase
     {
         $services = [
             Schema::class => function(ContainerInterface $container) {
-                return new Schema($container->get(QueryProviderInterface::class), $container->get(RecursiveTypeMapperInterface::class), $container->get(TypeResolver::class), null, $container->get(RootTypeMapperInterface::class));
+                return new Schema($container->get(QueryProviderInterface::class), $container->get(RecursiveTypeMapperInterface::class), $container->get(TypeResolver::class), $container->get(RootTypeMapperInterface::class));
             },
             QueryProviderInterface::class => function(ContainerInterface $container) {
                 return new GlobControllerQueryProvider('TheCodingMachine\\GraphQLite\\Fixtures\\Integration\\Controllers', $container->get(FieldsBuilder::class),
-                    $container->get(BasicAutoWiringContainer::class), new ArrayCache());
+                    $container->get(BasicAutoWiringContainer::class), new Psr16Cache(new ArrayAdapter()));
             },
             FieldsBuilder::class => function(ContainerInterface $container) {
                 return new FieldsBuilder(
@@ -93,8 +99,7 @@ class EndToEndTest extends TestCase
                     $container->get(NamingStrategyInterface::class),
                     $container->get(RootTypeMapperInterface::class),
                     $container->get(ParameterMiddlewareInterface::class),
-                    $container->get(FieldMiddlewareInterface::class),
-                    $container->get(TypeRegistry::class)
+                    $container->get(FieldMiddlewareInterface::class)
                 );
             },
             FieldMiddlewareInterface::class => function(ContainerInterface $container) {
@@ -111,7 +116,7 @@ class EndToEndTest extends TestCase
             },
             SecurityFieldMiddleware::class => function(ContainerInterface $container) {
                 return new SecurityFieldMiddleware(
-                    new ExpressionLanguage(new Psr16Adapter(new ArrayCache()), [new SecurityExpressionLanguageProvider()]),
+                    new ExpressionLanguage(new Psr16Adapter(new Psr16Cache(new ArrayAdapter())), [new SecurityExpressionLanguageProvider()]),
                     $container->get(AuthenticationServiceInterface::class),
                     $container->get(AuthorizationServiceInterface::class)
                 );
@@ -135,7 +140,7 @@ class EndToEndTest extends TestCase
                 return new RecursiveTypeMapper(
                     $container->get(TypeMapperInterface::class),
                     $container->get(NamingStrategyInterface::class),
-                    new ArrayCache(),
+                    new Psr16Cache(new ArrayAdapter()),
                     $container->get(TypeRegistry::class)
                 );
             },
@@ -151,7 +156,7 @@ class EndToEndTest extends TestCase
                     $container->get(AnnotationReader::class),
                     $container->get(NamingStrategyInterface::class),
                     $container->get(RecursiveTypeMapperInterface::class),
-                    new ArrayCache()
+                    new Psr16Cache(new ArrayAdapter())
                 );
             },
             GlobTypeMapper::class.'2' => function(ContainerInterface $container) {
@@ -163,7 +168,7 @@ class EndToEndTest extends TestCase
                     $container->get(AnnotationReader::class),
                     $container->get(NamingStrategyInterface::class),
                     $container->get(RecursiveTypeMapperInterface::class),
-                    new ArrayCache()
+                    new Psr16Cache(new ArrayAdapter())
                 );
             },
             PorpaginasTypeMapper::class => function(ContainerInterface $container) {
@@ -201,13 +206,18 @@ class EndToEndTest extends TestCase
                 return new NamingStrategy();
             },
             CachedDocBlockFactory::class => function() {
-                return new CachedDocBlockFactory(new ArrayCache());
+                return new CachedDocBlockFactory(new Psr16Cache(new ArrayAdapter()));
             },
             RootTypeMapperInterface::class => function(ContainerInterface $container) {
-                return new CompositeRootTypeMapper([
-                    new MyCLabsEnumTypeMapper(),
-                    new BaseTypeMapper($container->get(RecursiveTypeMapperInterface::class))
-                ]);
+                return new NullableTypeMapperAdapter();
+            },
+            'rootTypeMapper' => function(ContainerInterface $container) {
+                $errorRootTypeMapper = new FinalRootTypeMapper($container->get(RecursiveTypeMapperInterface::class));
+                $rootTypeMapper = new BaseTypeMapper($errorRootTypeMapper, $container->get(RecursiveTypeMapperInterface::class), $container->get(RootTypeMapperInterface::class));
+                $rootTypeMapper = new MyCLabsEnumTypeMapper($rootTypeMapper);
+                $rootTypeMapper = new CompoundTypeMapper($rootTypeMapper, $container->get(RootTypeMapperInterface::class), $container->get(TypeRegistry::class), $container->get(RecursiveTypeMapperInterface::class));
+                $rootTypeMapper = new IteratorTypeMapper($rootTypeMapper, $container->get(RootTypeMapperInterface::class));
+                return $rootTypeMapper;
             },
             ContainerParameterHandler::class => function(ContainerInterface $container) {
                 return new ContainerParameterHandler($container, true, true);
@@ -232,6 +242,14 @@ class EndToEndTest extends TestCase
         $container->get(TypeMapperInterface::class)->addTypeMapper($container->get(GlobTypeMapper::class));
         $container->get(TypeMapperInterface::class)->addTypeMapper($container->get(GlobTypeMapper::class.'2'));
         $container->get(TypeMapperInterface::class)->addTypeMapper($container->get(PorpaginasTypeMapper::class));
+
+        $container->get(RootTypeMapperInterface::class)->setNext($container->get('rootTypeMapper'));
+        /*$container->get(CompositeRootTypeMapper::class)->addRootTypeMapper(new CompoundTypeMapper($container->get(RootTypeMapperInterface::class), $container->get(TypeRegistry::class), $container->get(RecursiveTypeMapperInterface::class)));
+        $container->get(CompositeRootTypeMapper::class)->addRootTypeMapper(new IteratorTypeMapper($container->get(RootTypeMapperInterface::class), $container->get(TypeRegistry::class), $container->get(RecursiveTypeMapperInterface::class)));
+        $container->get(CompositeRootTypeMapper::class)->addRootTypeMapper(new IteratorTypeMapper($container->get(RootTypeMapperInterface::class), $container->get(TypeRegistry::class), $container->get(RecursiveTypeMapperInterface::class)));
+        $container->get(CompositeRootTypeMapper::class)->addRootTypeMapper(new MyCLabsEnumTypeMapper());
+        $container->get(CompositeRootTypeMapper::class)->addRootTypeMapper(new BaseTypeMapper($container->get(RecursiveTypeMapperInterface::class), $container->get(RootTypeMapperInterface::class)));
+*/
         return $container;
     }
 
@@ -844,6 +862,39 @@ class EndToEndTest extends TestCase
         ], $result->toArray(Debug::RETHROW_INTERNAL_EXCEPTIONS)['data']);
     }
 
+    public function testParameterAnnotationsInSourceField(): void
+    {
+        /**
+         * @var Schema $schema
+         */
+        $schema = $this->mainContainer->get(Schema::class);
+
+        $queryString = '
+        query {
+            contacts {
+                injectServiceFromExternal
+            }
+        }
+        ';
+
+        $result = GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
+
+        $this->assertSame([
+            'contacts' => [
+                [
+                    'injectServiceFromExternal' => 'OK',
+                ],
+                [
+                    'injectServiceFromExternal' => 'OK',
+                ]
+
+            ]
+        ], $result->toArray(Debug::RETHROW_INTERNAL_EXCEPTIONS)['data']);
+    }
+
     public function testEndToEndEnums(): void
     {
         /**
@@ -1195,11 +1246,40 @@ class EndToEndTest extends TestCase
             $schema,
             $queryString
         );
-        $resultArray = $result->toArray();
+        $resultArray = $result->toArray(Debug::RETHROW_UNSAFE_EXCEPTIONS);
 
         $this->assertEquals('SpecialProduct', $resultArray['data']['getProduct']['__typename']);
         $this->assertEquals('Special box', $resultArray['data']['getProduct']['name']);
         $this->assertEquals('unicorn', $resultArray['data']['getProduct']['special']);
+    }
+
+    public function testEndToEndUnionsInIterables(){
+        /**
+         * @var Schema $schema
+         */
+        $schema = $this->mainContainer->get(Schema::class);
+
+        $queryString = '
+        query {
+            getProducts2{
+                __typename
+                ... on SpecialProduct{
+                    name
+                    special
+                }
+            }
+        }
+        ';
+
+        $result = GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
+        $resultArray = $result->toArray(Debug::RETHROW_UNSAFE_EXCEPTIONS);
+
+        $this->assertEquals('SpecialProduct', $resultArray['data']['getProducts2'][0]['__typename']);
+        $this->assertEquals('Special box', $resultArray['data']['getProducts2'][0]['name']);
+        $this->assertEquals('unicorn', $resultArray['data']['getProducts2'][0]['special']);
     }
 
 }
