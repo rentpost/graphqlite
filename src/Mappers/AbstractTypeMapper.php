@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace TheCodingMachine\GraphQLite\Mappers;
 
 use GraphQL\Type\Definition\InputObjectType;
+use GraphQL\Type\Definition\NamedType;
 use GraphQL\Type\Definition\OutputType;
 use GraphQL\Type\Definition\Type;
 use Psr\Container\ContainerInterface;
@@ -124,7 +125,7 @@ abstract class AbstractTypeMapper implements TypeMapperInterface
      * Returns the array of globbed classes.
      * Only instantiable classes are returned.
      *
-     * @return array<string,ReflectionClass> Key: fully qualified class name
+     * @return array<string,ReflectionClass<object>> Key: fully qualified class name
      */
     abstract protected function getClassList(): array;
 
@@ -132,7 +133,6 @@ abstract class AbstractTypeMapper implements TypeMapperInterface
     {
         $globTypeMapperCache = new GlobTypeMapperCache();
 
-        /** @var ReflectionClass[] $classes */
         $classes = $this->getClassList();
         foreach ($classes as $className => $refClass) {
             $annotationsCache = $this->mapClassToAnnotationsCache->get($refClass, function () use ($refClass, $className) {
@@ -193,7 +193,6 @@ abstract class AbstractTypeMapper implements TypeMapperInterface
     {
         $globExtendTypeMapperCache = new GlobExtendTypeMapperCache();
 
-        /** @var ReflectionClass[] $classes */
         $classes = $this->getClassList();
         foreach ($classes as $className => $refClass) {
             $annotationsCache = $this->mapClassToExtendAnnotationsCache->get($refClass, function () use ($refClass) {
@@ -308,7 +307,7 @@ abstract class AbstractTypeMapper implements TypeMapperInterface
      *
      * @param string $typeName The name of the GraphQL type
      *
-     * @return Type&((ResolvableMutableInputInterface&InputObjectType)|MutableObjectType|MutableInterfaceType)
+     * @return NamedType&Type&((ResolvableMutableInputInterface&InputObjectType)|MutableObjectType|MutableInterfaceType)
      *
      * @throws CannotMapTypeExceptionInterface
      * @throws ReflectionException

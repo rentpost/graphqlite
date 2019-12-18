@@ -10,13 +10,16 @@ use ReflectionClass;
 use ReflectionException;
 use ReflectionMethod;
 use ReflectionParameter;
+use TheCodingMachine\GraphQLite\Annotations\Exceptions\InvalidParameterException;
 use TheCodingMachine\GraphQLite\Annotations\Field;
 use TheCodingMachine\GraphQLite\Annotations\Mutation;
+use TheCodingMachine\GraphQLite\Annotations\ParameterAnnotations;
 use TheCodingMachine\GraphQLite\Annotations\Query;
 use TheCodingMachine\GraphQLite\Annotations\SourceField;
 use TheCodingMachine\GraphQLite\Annotations\SourceFieldInterface;
 use TheCodingMachine\GraphQLite\Mappers\CannotMapTypeException;
 use TheCodingMachine\GraphQLite\Mappers\CannotMapTypeExceptionInterface;
+use TheCodingMachine\GraphQLite\Mappers\DuplicateMappingException;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\ParameterMiddlewareInterface;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\TypeHandler;
 use TheCodingMachine\GraphQLite\Mappers\RecursiveTypeMapperInterface;
@@ -31,7 +34,11 @@ use TheCodingMachine\GraphQLite\Types\TypeResolver;
 use Webmozart\Assert\Assert;
 use function array_merge;
 use function array_shift;
+use function assert;
+use function get_class;
 use function get_parent_class;
+use function is_string;
+use function reset;
 use function ucfirst;
 
 /**
@@ -65,21 +72,20 @@ class FieldsBuilder
         NamingStrategyInterface $namingStrategy,
         RootTypeMapperInterface $rootTypeMapper,
         ParameterMiddlewareInterface $parameterMapper,
-        FieldMiddlewareInterface $fieldMiddleware,
-        TypeRegistry $typeRegistry
+        FieldMiddlewareInterface $fieldMiddleware
     ) {
         $this->annotationReader      = $annotationReader;
         $this->recursiveTypeMapper   = $typeMapper;
         $this->typeResolver          = $typeResolver;
         $this->cachedDocBlockFactory = $cachedDocBlockFactory;
         $this->namingStrategy        = $namingStrategy;
-        $this->typeMapper            = new TypeHandler($typeMapper, $argumentResolver, $rootTypeMapper, $typeResolver, $typeRegistry);
+        $this->typeMapper            = new TypeHandler($argumentResolver, $rootTypeMapper, $typeResolver);
         $this->parameterMapper       = $parameterMapper;
         $this->fieldMiddleware = $fieldMiddleware;
     }
 
     /**
-     * @return FieldDefinition[]
+     * @return array<string, FieldDefinition>
      *
      * @throws ReflectionException
      */
@@ -89,7 +95,7 @@ class FieldsBuilder
     }
 
     /**
-     * @return FieldDefinition[]
+     * @return array<string, FieldDefinition>
      *
      * @throws ReflectionException
      */
@@ -116,10 +122,7 @@ class FieldsBuilder
 
         $fieldsFromSourceFields = $this->getQueryFieldsFromSourceFields($sourceFields, $refClass);
 
-        $fields = [];
-        foreach ($fieldAnnotations as $field) {
-            $fields[$field->name] = $field;
-        }
+        $fields = $fieldAnnotations;
         foreach ($fieldsFromSourceFields as $field) {
             $fields[$field->name] = $field;
         }
@@ -130,11 +133,13 @@ class FieldsBuilder
     /**
      * Track Field annotation in a self targeted type
      *
+     * @param class-string<object> $className
+     *
      * @return array<string, FieldDefinition> QueryField indexed by name.
      */
     public function getSelfFields(string $className): array
     {
-        $fieldAnnotations = $this->getFieldsByAnnotations(null, Annotations\Field::class, false, $className);
+        $fieldAnnotations = $this->getFieldsByAnnotations($className, Annotations\Field::class, false);
 
         $refClass = new ReflectionClass($className);
 
@@ -143,10 +148,7 @@ class FieldsBuilder
 
         $fieldsFromSourceFields = $this->getQueryFieldsFromSourceFields($sourceFields, $refClass);
 
-        $fields = [];
-        foreach ($fieldAnnotations as $field) {
-            $fields[$field->name] = $field;
-        }
+        $fields = $fieldAnnotations;
         foreach ($fieldsFromSourceFields as $field) {
             $fields[$field->name] = $field;
         }
@@ -192,20 +194,16 @@ class FieldsBuilder
     }
 
     /**
+     * @param object|class-string<object> $controller The controller instance, or the name of the source class name
      * @param bool $injectSource Whether to inject the source object or not as the first argument. True for @Field (unless @Type has no class attribute), false for @Query and @Mutation
      *
-     * @return FieldDefinition[]
+     * @return array<string, FieldDefinition>
      *
-     * @throws CannotMapTypeException
      * @throws ReflectionException
      */
-    private function getFieldsByAnnotations(?object $controller, string $annotationName, bool $injectSource, ?string $sourceClassName = null): array
+    private function getFieldsByAnnotations($controller, string $annotationName, bool $injectSource): array
     {
-        if ($sourceClassName !== null) {
-            $refClass = new ReflectionClass($sourceClassName);
-        } else {
-            $refClass = new ReflectionClass($controller);
-        }
+        $refClass = new ReflectionClass($controller);
 
         $queryList = [];
 
@@ -260,7 +258,7 @@ class FieldsBuilder
                     }
 
                     $prefetchParameters = $prefetchRefMethod->getParameters();
-                    $first_prefetch_parameter = array_shift($prefetchParameters);
+                    $firstPrefetchParameter = array_shift($prefetchParameters);
 
                     $prefetchDocBlockObj = $this->cachedDocBlockFactory->getDocBlock($prefetchRefMethod);
 
@@ -296,10 +294,9 @@ class FieldsBuilder
             } else {
                 $type = $this->typeMapper->mapReturnType($refMethod, $docBlockObj);
             }
-            if ($sourceClassName !== null) {
+            if (is_string($controller)) {
                 $fieldDescriptor->setTargetMethodOnSource($methodName);
             } else {
-                Assert::notNull($controller);
                 $callable = [$controller, $methodName];
                 Assert::isCallable($callable);
                 $fieldDescriptor->setCallable($callable);
@@ -318,7 +315,10 @@ class FieldsBuilder
             });
 
             if ($field !== null) {
-                $queryList[] = $field;
+                if (isset($queryList[$fieldDescriptor->getName()])) {
+                    throw DuplicateMappingException::createForQuery($refClass->getName(), $fieldDescriptor->getName());
+                }
+                $queryList[$fieldDescriptor->getName()] = $field;
             }
 
             /*if ($unauthorized) {
@@ -338,12 +338,15 @@ class FieldsBuilder
 
     /**
      * @param SourceFieldInterface[] $sourceFields
+     * @param ReflectionClass<T> $refClass
      *
      * @return FieldDefinition[]
      *
      * @throws CannotMapTypeException
      * @throws CannotMapTypeExceptionInterface
      * @throws ReflectionException
+     *
+     * @template T of object
      */
     private function getQueryFieldsFromSourceFields(array $sourceFields, ReflectionClass $refClass): array
     {
@@ -401,7 +404,7 @@ class FieldsBuilder
 
             $fieldDescriptor->setComment($docBlockComment);
 
-            $args = $this->mapParameters($refMethod->getParameters(), $docBlockObj);
+            $args = $this->mapParameters($refMethod->getParameters(), $docBlockObj, $sourceField);
 
             $fieldDescriptor->setParameters($args);
 
@@ -419,7 +422,7 @@ class FieldsBuilder
 
             $fieldDescriptor->setType($type);
             $fieldDescriptor->setInjectSource(false);
-            $fieldDescriptor->setMiddlewareAnnotations($sourceField->getAnnotations());
+            $fieldDescriptor->setMiddlewareAnnotations($sourceField->getMiddlewareAnnotations());
 
             $field = $this->fieldMiddleware->process($fieldDescriptor, new class implements FieldHandlerInterface {
                 public function handle(QueryFieldDescriptor $fieldDescriptor): ?FieldDefinition
@@ -438,6 +441,11 @@ class FieldsBuilder
         return $queryList;
     }
 
+    /**
+     * @param ReflectionClass<T> $reflectionClass
+     *
+     * @template T of object
+     */
     private function getMethodFromPropertyName(ReflectionClass $reflectionClass, string $propertyName): ReflectionMethod
     {
         if ($reflectionClass->hasMethod($propertyName)) {
@@ -460,12 +468,13 @@ class FieldsBuilder
      * @param ReflectionParameter[] $refParameters
      *
      * @return array<string, ParameterInterface>
-     *
-     * @throws MissingTypeHintRuntimeException
      */
-    private function mapParameters(array $refParameters, DocBlock $docBlock): array
+    private function mapParameters(array $refParameters, DocBlock $docBlock, ?SourceFieldInterface $sourceField = null): array
     {
-        $args = [];
+        if (empty($refParameters)) {
+            return [];
+        }
+        $additionalParameterAnnotations = $sourceField !== null ? $sourceField->getParameterAnnotations() : [];
 
         $docBlockTypes = [];
         if (! empty($refParameters)) {
@@ -476,12 +485,31 @@ class FieldsBuilder
             }
         }
 
+        $parameterAnnotationsPerParameter = $this->annotationReader->getParameterAnnotationsPerParameter($refParameters);
+
         foreach ($refParameters as $parameter) {
-            $parameterAnnotations = $this->annotationReader->getParameterAnnotations($parameter);
+            $parameterAnnotations = $parameterAnnotationsPerParameter[$parameter->getName()] ?? new ParameterAnnotations([]);
+            //$parameterAnnotations = $this->annotationReader->getParameterAnnotations($parameter);
+            if (! empty($additionalParameterAnnotations[$parameter->getName()])) {
+                $parameterAnnotations->merge($additionalParameterAnnotations[$parameter->getName()]);
+                unset($additionalParameterAnnotations[$parameter->getName()]);
+            }
 
             $parameterObj = $this->parameterMapper->mapParameter($parameter, $docBlock, $docBlockTypes[$parameter->getName()] ?? null, $parameterAnnotations, $this->typeMapper);
 
             $args[$parameter->getName()] = $parameterObj;
+        }
+
+        // Sanity check, are the parameters declared in $additionalParameterAnnotations available in $refParameters?
+        if (! empty($additionalParameterAnnotations)) {
+            $refParameter = reset($refParameters);
+            foreach ($additionalParameterAnnotations as $parameterName => $parameterAnnotations) {
+                foreach ($parameterAnnotations->getAllAnnotations() as $annotation) {
+                    $refMethod = $refParameter->getDeclaringFunction();
+                    assert($refMethod instanceof ReflectionMethod);
+                    throw InvalidParameterException::parameterNotFoundFromSourceField($refParameter->getName(), get_class($annotation), $refMethod);
+                }
+            }
         }
 
         return $args;

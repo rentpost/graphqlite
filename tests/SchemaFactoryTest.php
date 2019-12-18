@@ -7,18 +7,21 @@ use GraphQL\GraphQL;
 use GraphQL\Type\SchemaConfig;
 use Mouf\Composer\ClassNameMapper;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Cache\Adapter\Psr16Adapter;
-use Symfony\Component\Cache\Simple\ArrayCache;
-use Symfony\Component\Cache\Simple\PhpFilesCache;
+use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 use TheCodingMachine\GraphQLite\Containers\BasicAutoWiringContainer;
 use TheCodingMachine\GraphQLite\Containers\EmptyContainer;
 use TheCodingMachine\GraphQLite\Mappers\CannotMapTypeException;
 use TheCodingMachine\GraphQLite\Mappers\CompositeTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\DuplicateMappingException;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\ContainerParameterHandler;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\TypeHandler;
 use TheCodingMachine\GraphQLite\Mappers\RecursiveTypeMapperInterface;
 use TheCodingMachine\GraphQLite\Mappers\Root\CompositeRootTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\VoidRootTypeMapper;
+use TheCodingMachine\GraphQLite\Mappers\Root\VoidRootTypeMapperFactory;
 use TheCodingMachine\GraphQLite\Mappers\StaticClassListTypeMapperFactory;
 use TheCodingMachine\GraphQLite\Mappers\TypeMapperFactoryInterface;
 use TheCodingMachine\GraphQLite\Mappers\TypeMapperInterface;
@@ -28,13 +31,14 @@ use TheCodingMachine\GraphQLite\Security\VoidAuthenticationService;
 use TheCodingMachine\GraphQLite\Security\VoidAuthorizationService;
 use TheCodingMachine\GraphQLite\Fixtures\TestSelfType;
 
+
 class SchemaFactoryTest extends TestCase
 {
 
     public function testCreateSchema(): void
     {
         $container = new BasicAutoWiringContainer(new EmptyContainer());
-        $cache = new ArrayCache();
+        $cache = new Psr16Cache(new ArrayAdapter());
 
         $factory = new SchemaFactory($cache, $container);
         $factory->setAuthenticationService(new VoidAuthenticationService());
@@ -53,7 +57,7 @@ class SchemaFactoryTest extends TestCase
     public function testSetters(): void
     {
         $container = new BasicAutoWiringContainer(new EmptyContainer());
-        $cache = new ArrayCache();
+        $cache = new Psr16Cache(new ArrayAdapter());
 
         $factory = new SchemaFactory($cache, $container);
 
@@ -65,11 +69,11 @@ class SchemaFactoryTest extends TestCase
                 ->setNamingStrategy(new NamingStrategy())
                 ->addTypeMapper(new CompositeTypeMapper())
                 ->addTypeMapperFactory(new StaticClassListTypeMapperFactory([TestSelfType::class]))
-                ->addRootTypeMapper(new CompositeRootTypeMapper([]))
+                ->addRootTypeMapperFactory(new VoidRootTypeMapperFactory())
                 ->addParameterMiddleware(new ParameterMiddlewarePipe())
                 ->addQueryProviderFactory(new AggregateControllerQueryProviderFactory([], $container))
                 ->setSchemaConfig(new SchemaConfig())
-                ->setExpressionLanguage(new ExpressionLanguage(new Psr16Adapter(new ArrayCache())))
+                ->setExpressionLanguage(new ExpressionLanguage(new Psr16Adapter(new Psr16Cache(new ArrayAdapter()))))
                 ->devMode()
                 ->prodMode();
 
@@ -81,7 +85,7 @@ class SchemaFactoryTest extends TestCase
     public function testClassNameMapperInjectionWithValidMapper(): void
     {
         $factory = new SchemaFactory(
-            new ArrayCache(),
+            new Psr16Cache(new ArrayAdapter()),
             new BasicAutoWiringContainer(
                 new EmptyContainer()
             )
@@ -100,7 +104,7 @@ class SchemaFactoryTest extends TestCase
     public function testClassNameMapperInjectionWithInvalidMapper(): void
     {
         $factory = new SchemaFactory(
-            new ArrayCache(),
+            new Psr16Cache(new ArrayAdapter()),
             new BasicAutoWiringContainer(
                 new EmptyContainer()
             )
@@ -118,7 +122,7 @@ class SchemaFactoryTest extends TestCase
     public function testException(): void
     {
         $container = new BasicAutoWiringContainer(new EmptyContainer());
-        $cache = new ArrayCache();
+        $cache = new Psr16Cache(new ArrayAdapter());
 
         $factory = new SchemaFactory($cache, $container);
 
@@ -129,7 +133,7 @@ class SchemaFactoryTest extends TestCase
     public function testException2(): void
     {
         $container = new BasicAutoWiringContainer(new EmptyContainer());
-        $cache = new ArrayCache();
+        $cache = new Psr16Cache(new ArrayAdapter());
 
         $factory = new SchemaFactory($cache, $container);
         $factory->addTypeNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\Integration');
@@ -174,5 +178,59 @@ class SchemaFactoryTest extends TestCase
 
             ]
         ], $result->toArray(Debug::RETHROW_INTERNAL_EXCEPTIONS)['data']);
+    }
+
+    public function testDuplicateQueryException(): void
+    {
+        $factory = new SchemaFactory(
+            new Psr16Cache(new ArrayAdapter()),
+            new BasicAutoWiringContainer(
+                new EmptyContainer()
+            )
+        );
+        $factory->setAuthenticationService(new VoidAuthenticationService())
+                ->setAuthorizationService(new VoidAuthorizationService())
+                ->addControllerNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\DuplicateQueries')
+                ->addTypeNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\Integration');
+
+        $this->expectException(DuplicateMappingException::class);
+        $this->expectExceptionMessage("The query/mutation 'duplicateQuery' is declared twice in class 'TheCodingMachine\\GraphQLite\\Fixtures\\DuplicateQueries\\TestControllerWithDuplicateQuery");
+        $schema = $factory->createSchema();
+        $queryString = '
+        query {
+            duplicateQuery
+        }
+        ';
+        GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
+    }
+
+    public function testDuplicateQueryInTwoControllersException(): void
+    {
+        $factory = new SchemaFactory(
+            new Psr16Cache(new ArrayAdapter()),
+            new BasicAutoWiringContainer(
+                new EmptyContainer()
+            )
+        );
+        $factory->setAuthenticationService(new VoidAuthenticationService())
+            ->setAuthorizationService(new VoidAuthorizationService())
+            ->addControllerNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\DuplicateQueriesInTwoControllers')
+            ->addTypeNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\Integration');
+
+        $this->expectException(DuplicateMappingException::class);
+        $this->expectExceptionMessage("The query/mutation 'duplicateQuery' is declared twice: in class 'TheCodingMachine\\GraphQLite\\Fixtures\\DuplicateQueriesInTwoControllers\\TestControllerWithDuplicateQuery1' and in class 'TheCodingMachine\\GraphQLite\\Fixtures\\DuplicateQueriesInTwoControllers\\TestControllerWithDuplicateQuery2");
+        $schema = $factory->createSchema();
+        $queryString = '
+        query {
+            duplicateQuery
+        }
+        ';
+        GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
     }
 }

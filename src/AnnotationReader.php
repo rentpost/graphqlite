@@ -14,6 +14,7 @@ use RuntimeException;
 use TheCodingMachine\GraphQLite\Annotations\AbstractRequest;
 use TheCodingMachine\GraphQLite\Annotations\Decorate;
 use TheCodingMachine\GraphQLite\Annotations\Exceptions\ClassNotFoundException;
+use TheCodingMachine\GraphQLite\Annotations\Exceptions\InvalidParameterException;
 use TheCodingMachine\GraphQLite\Annotations\ExtendType;
 use TheCodingMachine\GraphQLite\Annotations\Factory;
 use TheCodingMachine\GraphQLite\Annotations\MiddlewareAnnotationInterface;
@@ -23,11 +24,16 @@ use TheCodingMachine\GraphQLite\Annotations\ParameterAnnotations;
 use TheCodingMachine\GraphQLite\Annotations\SourceField;
 use TheCodingMachine\GraphQLite\Annotations\Type;
 use Webmozart\Assert\Assert;
+use function array_diff_key;
 use function array_filter;
 use function array_key_exists;
+use function array_map;
 use function array_merge;
 use function array_values;
+use function assert;
+use function get_class;
 use function in_array;
+use function reset;
 use function strpos;
 use function strrpos;
 use function substr;
@@ -70,11 +76,16 @@ class AnnotationReader
         $this->strictNamespaces = $strictNamespaces;
     }
 
+    /**
+     * @param ReflectionClass<T> $refClass
+     *
+     * @template T of object
+     */
     public function getTypeAnnotation(ReflectionClass $refClass): ?Type
     {
         try {
-            /** @var Type|null $type */
             $type = $this->getClassAnnotation($refClass, Type::class);
+            assert($type instanceof Type || $type === null);
             if ($type !== null && $type->isSelfType()) {
                 $type->setClass($refClass->getName());
             }
@@ -85,11 +96,16 @@ class AnnotationReader
         return $type;
     }
 
+    /**
+     * @param ReflectionClass<T> $refClass
+     *
+     * @template T of object
+     */
     public function getExtendTypeAnnotation(ReflectionClass $refClass): ?ExtendType
     {
         try {
-            /** @var ExtendType|null $extendType */
             $extendType = $this->getClassAnnotation($refClass, ExtendType::class);
+            assert($extendType instanceof ExtendType || $extendType === null);
         } catch (ClassNotFoundException $e) {
             throw ClassNotFoundException::wrapExceptionForExtendTag($e, $refClass->getName());
         }
@@ -99,14 +115,18 @@ class AnnotationReader
 
     public function getRequestAnnotation(ReflectionMethod $refMethod, string $annotationName): ?AbstractRequest
     {
-        /** @var AbstractRequest|null $queryAnnotation */
         $queryAnnotation = $this->getMethodAnnotation($refMethod, $annotationName);
+        assert($queryAnnotation instanceof AbstractRequest || $queryAnnotation === null);
 
         return $queryAnnotation;
     }
 
     /**
+     * @param ReflectionClass<T> $refClass
+     *
      * @return SourceField[]
+     *
+     * @template T of object
      */
     public function getSourceFields(ReflectionClass $refClass): array
     {
@@ -118,20 +138,27 @@ class AnnotationReader
 
     public function getFactoryAnnotation(ReflectionMethod $refMethod): ?Factory
     {
-        /** @var Factory|null $factoryAnnotation */
         $factoryAnnotation = $this->getMethodAnnotation($refMethod, Factory::class);
+        assert($factoryAnnotation instanceof Factory || $factoryAnnotation === null);
 
         return $factoryAnnotation;
     }
 
     public function getDecorateAnnotation(ReflectionMethod $refMethod): ?Decorate
     {
-        /** @var Decorate|null $decorateAnnotation */
         $decorateAnnotation = $this->getMethodAnnotation($refMethod, Decorate::class);
+        assert($decorateAnnotation instanceof Decorate || $decorateAnnotation === null);
 
         return $decorateAnnotation;
     }
 
+    /**
+     * Only used in unit tests/
+     *
+     * @deprecated Use getParameterAnnotationsPerParameter instead
+     *
+     * @throws AnnotationException
+     */
     public function getParameterAnnotations(ReflectionParameter $refParameter): ParameterAnnotations
     {
         $method = $refParameter->getDeclaringFunction();
@@ -147,6 +174,51 @@ class AnnotationReader
         return new ParameterAnnotations($filteredAnnotations);
     }
 
+    /**
+     * @param ReflectionParameter[] $refParameters
+     *
+     * @return array<string, ParameterAnnotations>
+     *
+     * @throws AnnotationException
+     */
+    public function getParameterAnnotationsPerParameter(array $refParameters): array
+    {
+        if (empty($refParameters)) {
+            return [];
+        }
+        $firstParam = reset($refParameters);
+
+        $method = $firstParam->getDeclaringFunction();
+        Assert::isInstanceOf($method, ReflectionMethod::class);
+
+        /** @var ParameterAnnotationInterface[] $parameterAnnotations */
+        $parameterAnnotations = $this->getMethodAnnotations($method, ParameterAnnotationInterface::class);
+
+        /**
+         * @var array<string, array<int, ParameterAnnotations>>
+         */
+        $parameterAnnotationsPerParameter = [];
+        foreach ($parameterAnnotations as $parameterAnnotation) {
+            $parameterAnnotationsPerParameter[$parameterAnnotation->getTarget()][] = $parameterAnnotation;
+        }
+
+        // Let's check that the referenced parameters actually do exist:
+        $parametersByKey = [];
+        foreach ($refParameters as $refParameter) {
+            $parametersByKey[$refParameter->getName()] = true;
+        }
+        $diff = array_diff_key($parameterAnnotationsPerParameter, $parametersByKey);
+        if (! empty($diff)) {
+            foreach ($diff as $parameterName => $parameterAnnotations) {
+                throw InvalidParameterException::parameterNotFound($parameterName, get_class($parameterAnnotations[0]), $method);
+            }
+        }
+
+        return array_map(static function (array $parameterAnnotations) {
+            return new ParameterAnnotations($parameterAnnotations);
+        }, $parameterAnnotationsPerParameter);
+    }
+
     public function getMiddlewareAnnotations(ReflectionMethod $refMethod): MiddlewareAnnotations
     {
         /** @var MiddlewareAnnotationInterface[] $middlewareAnnotations */
@@ -157,6 +229,10 @@ class AnnotationReader
 
     /**
      * Returns a class annotation. Does not look in the parent class.
+     *
+     * @param ReflectionClass<T> $refClass
+     *
+     * @template T of object
      */
     private function getClassAnnotation(ReflectionClass $refClass, string $annotationClass): ?object
     {
@@ -230,7 +306,15 @@ class AnnotationReader
     /**
      * Returns the class annotations. Finds in the parents too.
      *
-     * @return object[]
+     * @param ReflectionClass<T> $refClass
+     * @param class-string<A> $annotationClass
+     *
+     * @return A[]
+     *
+     * @throws AnnotationException
+     *
+     * @template T of object
+     * @template A of object
      */
     public function getClassAnnotations(ReflectionClass $refClass, string $annotationClass): array
     {
@@ -268,7 +352,13 @@ class AnnotationReader
     /**
      * Returns the method's annotations.
      *
-     * @return array<int, object>
+     * @param class-string<T> $annotationClass
+     *
+     * @return array<int, T>
+     *
+     * @throws AnnotationException
+     *
+     * @template T of object
      */
     public function getMethodAnnotations(ReflectionMethod $refMethod, string $annotationClass): array
     {

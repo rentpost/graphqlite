@@ -14,7 +14,7 @@ use TheCodingMachine\GraphQLite\Types\TypeResolver;
  * Those classes are made available to factories implementing QueryProviderFactoryInterface
  * or TypeMapperFactoryInterface
  */
-class FactoryContext
+final class FactoryContext
 {
     /** @var AnnotationReader */
     private $annotationReader;
