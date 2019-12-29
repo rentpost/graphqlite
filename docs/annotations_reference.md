@@ -38,7 +38,6 @@ class          | *no*       | string | The targeted class. If no class is passed
 name           | *no*       | string | The name of the GraphQL type generated. If not passed, the name of the class is used. If the class ends with "Type", the "Type" suffix is removed
 default        | *no*       | bool   | Defaults to *true*. Whether the targeted PHP class should be mapped by default to this type.
 external       | *no*       | bool   | Whether this is an [external type declaration](external_type_declaration.md) or not. You usually do not need to use this attribute since this value defaults to true if a "class" attribute is set. This is only useful if you are declaring a type with no PHP class mapping using the "name" attribute.
-disableInheritance       | *no*       | bool   | Out of the box, it a PHP class who is a type extends another PHP class who is a type, GraphQL inheritance is put in place. Use this attribute to remove the default behaviour. The type will not map any fields from the parent class AND will not implement the interface.
 
 ## @ExtendType annotation
 
@@ -74,7 +73,25 @@ Attribute      | Compulsory | Type | Definition
 ---------------|------------|------|--------
 name           | *yes*       | string | The name of the field.
 [outputType](custom_output_types.md)     | *no*       | string | Forces the GraphQL output type of the field. Otherwise, return type is used.
+phpType        | *no*       | string | The PHP type of the field (as you would write it in a Docblock)
 annotations    | *no*       | array<Annotations>  | A set of annotations that apply to this field. You would typically used a "@Logged" or "@Right" annotation here.
+
+**Note**: `outputType` and `phpType` are mutually exclusive.
+
+## @MagicField annotation
+
+The `@MagicField` annotation is used to declare a GraphQL field that originates from a PHP magic property (using `__get` magic method).
+
+**Applies on**: classes annotated with `@Type` or `@ExtendType`.
+
+Attribute      | Compulsory | Type | Definition
+---------------|------------|------|--------
+name           | *yes*       | string | The name of the field.
+[outputType](custom_output_types.md)  | *no*(*)       | string | The GraphQL output type of the field.
+phpType     | *no*(*)       | string | The PHP type of the field (as you would write it in a Docblock)
+annotations    | *no*       | array<Annotations>  | A set of annotations that apply to this field. You would typically used a "@Logged" or "@Right" annotation here.
+
+(*) **Note**: `outputType` and `phpType` are mutually exclusive. You MUST provide one of them.
 
 ## @Logged annotation
 
@@ -113,6 +130,30 @@ to access it (according to the `@Logged` and `@Right` annotations).
 **Applies on**: methods annotated with `@Query`, `@Mutation` or `@Field` and one of `@Logged` or `@Right` annotations.
 
 `@HideIfUnauthorized` and `@FailWith` are mutually exclusive.
+
+## @InjectUser annotation
+
+Use the `@InjectUser` annotation to inject an instance of the current user logged in into a parameter of your 
+query / mutation / field.
+
+**Applies on**: methods annotated with `@Query`, `@Mutation` or `@Field`.
+
+Attribute      | Compulsory | Type   | Definition
+---------------|------------|--------|--------
+*for*          | *yes*      | string | The name of the PHP parameter
+
+## @Security annotation
+
+The `@Security` annotation can be used to check fin-grained access rights.
+It is very flexible: it allows you to pass an expression that can contains custom logic.
+
+See [the fine grained security page](fine-grained-security.md) for more details.
+
+**Applies on**: methods annotated with `@Query`, `@Mutation` or `@Field`.
+
+Attribute      | Compulsory | Type   | Definition
+---------------|------------|--------|--------
+*default*      | *yes*      | string | The security expression
 
 ## @Factory annotation
 
