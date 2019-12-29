@@ -21,9 +21,11 @@ use TheCodingMachine\GraphQLite\GlobControllerQueryProvider;
 use TheCodingMachine\GraphQLite\GraphQLRuntimeException;
 use TheCodingMachine\GraphQLite\InputTypeGenerator;
 use TheCodingMachine\GraphQLite\InputTypeUtils;
+use TheCodingMachine\GraphQLite\Mappers\CannotMapTypeException;
 use TheCodingMachine\GraphQLite\Mappers\CompositeTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\GlobTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\ContainerParameterHandler;
+use TheCodingMachine\GraphQLite\Mappers\Parameters\InjectUserParameterHandler;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\ParameterMiddlewareInterface;
 use TheCodingMachine\GraphQLite\Mappers\Parameters\ResolveInfoParameterHandler;
 use TheCodingMachine\GraphQLite\Mappers\PorpaginasTypeMapper;
@@ -51,6 +53,7 @@ use TheCodingMachine\GraphQLite\Containers\BasicAutoWiringContainer;
 use TheCodingMachine\GraphQLite\Containers\EmptyContainer;
 use TheCodingMachine\GraphQLite\Reflection\CachedDocBlockFactory;
 use TheCodingMachine\GraphQLite\Schema;
+use TheCodingMachine\GraphQLite\SchemaFactory;
 use TheCodingMachine\GraphQLite\Security\AuthenticationServiceInterface;
 use TheCodingMachine\GraphQLite\Security\AuthorizationServiceInterface;
 use TheCodingMachine\GraphQLite\Security\SecurityExpressionLanguageProvider;
@@ -222,6 +225,9 @@ class EndToEndTest extends TestCase
             ContainerParameterHandler::class => function(ContainerInterface $container) {
                 return new ContainerParameterHandler($container, true, true);
             },
+            InjectUserParameterHandler::class => function(ContainerInterface $container) {
+                return new InjectUserParameterHandler($container->get(AuthenticationServiceInterface::class));
+            },
             'testService' => function() {
                 return 'foo';
             },
@@ -233,6 +239,7 @@ class EndToEndTest extends TestCase
                 $parameterMiddlewarePipe = new ParameterMiddlewarePipe();
                 $parameterMiddlewarePipe->pipe(new ResolveInfoParameterHandler());
                 $parameterMiddlewarePipe->pipe($container->get(ContainerParameterHandler::class));
+                $parameterMiddlewarePipe->pipe($container->get(InjectUserParameterHandler::class));
 
                 return $parameterMiddlewarePipe;
             }
@@ -446,7 +453,7 @@ class EndToEndTest extends TestCase
                     {
                         name: "bar"
                     }
-                ]   
+                ]
             }
           ) {
             name,
@@ -1282,4 +1289,95 @@ class EndToEndTest extends TestCase
         $this->assertEquals('unicorn', $resultArray['data']['getProducts2'][0]['special']);
     }
 
+    public function testEndToEndMagicFieldWithPhpType(): void
+    {
+        /**
+         * @var Schema $schema
+         */
+        $schema = $this->mainContainer->get(Schema::class);
+
+        $queryString = '
+        query {
+            contacts {
+                magicContact {
+                    name
+                }
+            }
+        }
+        ';
+
+        $result = GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
+
+        $this->assertSame([
+            'contacts' => [
+                [
+                    'magicContact' => [
+                        'name' => 'foo'
+                    ]
+                ],
+                [
+                    'magicContact' => [
+                        'name' => 'foo'
+                    ]
+                ],
+            ]
+        ], $result->toArray(Debug::RETHROW_INTERNAL_EXCEPTIONS)['data']);
+    }
+
+    public function testEndToEndInjectUser(): void
+    {
+        $container = $this->createContainer([
+            AuthenticationServiceInterface::class => static function() {
+                return new class implements AuthenticationServiceInterface {
+                    public function isLogged(): bool
+                    {
+                        return true;
+                    }
+
+                    public function getUser(): ?object
+                    {
+                        $user = new stdClass();
+                        $user->bar = 42;
+                        return $user;
+                    }
+                };
+            }
+        ]);
+
+        /**
+         * @var Schema $schema
+         */
+        $schema = $container->get(Schema::class);
+
+        // Test with failWith attribute
+        $queryString = '
+        query {
+            injectedUser
+        }
+        ';
+
+        $result = GraphQL::executeQuery(
+            $schema,
+            $queryString
+        );
+
+        $this->assertSame(42, $result->toArray(Debug::RETHROW_UNSAFE_EXCEPTIONS)['data']['injectedUser']);
+    }
+
+    public function testInputOutputNameConflict(): void
+    {
+        $schemaFactory = new SchemaFactory(new Psr16Cache(new ArrayAdapter()), new BasicAutoWiringContainer(new EmptyContainer()));
+        $schemaFactory->addControllerNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\InputOutputNameConflict\\Controllers');
+        $schemaFactory->addTypeNamespace('TheCodingMachine\\GraphQLite\\Fixtures\\InputOutputNameConflict\\Types');
+
+        $schema = $schemaFactory->createSchema();
+
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For parameter $inAndOut, in TheCodingMachine\\GraphQLite\\Fixtures\\InputOutputNameConflict\\Controllers\\InAndOutController::testInAndOut, type "InAndOut" must be an input type (if you declared an input type with the name "InAndOut", make sure that there are no output type with the same name as this is forbidden by the GraphQL spec).');
+
+        $schema->validate();
+    }
 }

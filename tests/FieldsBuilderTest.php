@@ -56,6 +56,7 @@ use TheCodingMachine\GraphQLite\Fixtures\TestTypeMissingField;
 use TheCodingMachine\GraphQLite\Fixtures\TestTypeMissingReturnType;
 use TheCodingMachine\GraphQLite\Fixtures\TestTypeWithFailWith;
 use TheCodingMachine\GraphQLite\Fixtures\TestTypeWithInvalidPrefetchParameter;
+use TheCodingMachine\GraphQLite\Fixtures\TestTypeWithMagicProperty;
 use TheCodingMachine\GraphQLite\Fixtures\TestTypeWithPrefetchMethod;
 use TheCodingMachine\GraphQLite\Fixtures\TestTypeWithSourceFieldInterface;
 use TheCodingMachine\GraphQLite\Containers\EmptyContainer;
@@ -68,6 +69,7 @@ use TheCodingMachine\GraphQLite\Mappers\Root\BaseTypeMapper;
 use TheCodingMachine\GraphQLite\Mappers\Root\CompositeRootTypeMapper;
 use TheCodingMachine\GraphQLite\Middlewares\AuthorizationFieldMiddleware;
 use TheCodingMachine\GraphQLite\Middlewares\BadExpressionInSecurityException;
+use TheCodingMachine\GraphQLite\Middlewares\MissingMagicGetException;
 use TheCodingMachine\GraphQLite\Parameters\MissingArgumentException;
 use TheCodingMachine\GraphQLite\Reflection\CachedDocBlockFactory;
 use TheCodingMachine\GraphQLite\Security\AuthenticationServiceInterface;
@@ -170,7 +172,7 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
+        $this->expectException(CannotMapTypeException::class);
         $queryProvider->getQueries($controller);
     }
 
@@ -365,8 +367,8 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
     {
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage("Return type in TheCodingMachine\\GraphQLite\\Fixtures\\TestObjectMissingReturnType::getTest is missing a type-hint (or type-hinted to \"mixed\"). Please provide a better type-hint.");
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For return type of TheCodingMachine\GraphQLite\Fixtures\TestObjectMissingReturnType::getTest, a type-hint is missing (or PHPDoc specifies a "mixed" type-hint). Please provide a better type-hint.');
         $queryProvider->getFields(new TestTypeMissingReturnType(), true);
     }
 
@@ -443,7 +445,8 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
     public function testNoReturnTypeError(): void
     {
         $queryProvider = $this->buildFieldsBuilder();
-        $this->expectException(TypeMappingRuntimeException::class);
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For return type of TheCodingMachine\GraphQLite\Fixtures\TestControllerNoReturnType::test, a type-hint is missing (or PHPDoc specifies a "mixed" type-hint). Please provide a better type-hint.');
         $queryProvider->getQueries(new TestControllerNoReturnType());
     }
 
@@ -505,19 +508,19 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage('Return type in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithArrayReturnType::test is type-hinted to array. Please provide an additional @return in the PHPDoc block to further specify the type of the array. For instance: @return string[]');
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For return type of TheCodingMachine\GraphQLite\Fixtures\TestControllerWithArrayReturnType::test, please provide an additional @return in the PHPDoc block to further specify the return type of array. For instance: @return string[]');
         $queryProvider->getQueries($controller);
     }
 
-    public function testQueryProviderWithArrayParams(): void
+    public function testQueryProviderWithIterableParams(): void
     {
         $controller = new TestControllerWithArrayParam();
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage('Parameter $params in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithArrayParam::test is type-hinted to array. Please provide an additional @param in the PHPDoc block to further specify the type of the array. For instance: @param string[] $params.');
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For parameter $params, in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithArrayParam::test, please provide an additional @param in the PHPDoc block to further specify the type of the iterable. For instance: @param string[] $params.');
         $queryProvider->getQueries($controller);
     }
 
@@ -725,8 +728,8 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage('Parameter $dateTime in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithParamDateTime::test is type-hinted to "DateTime". Type-hinting a parameter against DateTime is not allowed. Please use the DateTimeImmutable type instead.');
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For parameter $dateTime, in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithParamDateTime::test, type-hinting against DateTime is not allowed. Please use the DateTimeImmutable type instead.');
         $queries = $queryProvider->getQueries($controller);
     }
 
@@ -736,8 +739,8 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage('Return type in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithReturnDateTime::test is type-hinted to "DateTime". Type-hinting a parameter against DateTime is not allowed. Please use the DateTimeImmutable type instead.');
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For return type of TheCodingMachine\GraphQLite\Fixtures\TestControllerWithReturnDateTime::test, type-hinting against DateTime is not allowed. Please use the DateTimeImmutable type instead.');
         $queries = $queryProvider->getQueries($controller);
     }
 
@@ -747,8 +750,8 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
 
         $queryProvider = $this->buildFieldsBuilder();
 
-        $this->expectException(TypeMappingRuntimeException::class);
-        $this->expectExceptionMessage('Parameter $testObject in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithUnionInputParam::test is type-hinted to "\TheCodingMachine\GraphQLite\Fixtures\TestObject|\TheCodingMachine\GraphQLite\Fixtures\TestObject2". Type-hinting a parameter to a union type is forbidden in GraphQL. Only return types can be union types.');
+        $this->expectException(CannotMapTypeException::class);
+        $this->expectExceptionMessage('For parameter $testObject, in TheCodingMachine\GraphQLite\Fixtures\TestControllerWithUnionInputParam::test, parameter is type-hinted to "\TheCodingMachine\GraphQLite\Fixtures\TestObject|\TheCodingMachine\GraphQLite\Fixtures\TestObject2". Type-hinting a parameter to a union type is forbidden in GraphQL. Only return types can be union types.');
         $queries = $queryProvider->getQueries($controller);
     }
 
@@ -772,5 +775,27 @@ class FieldsBuilderTest extends AbstractQueryProviderTest
         $this->expectException(InvalidParameterException::class);
         $this->expectExceptionMessage('Could not find parameter "foo" declared in annotation "TheCodingMachine\\GraphQLite\\Annotations\\HideParameter". This annotation is itself declared in a SourceField annotation targeting resolver "TheCodingMachine\\GraphQLite\\Fixtures\\TestObject::getSibling()".');
         $fields = $queryProvider->getFields($controller);
+    }
+
+    public function testMagicField(): void
+    {
+        $controller = new TestTypeWithMagicProperty();
+
+        $queryProvider = $this->buildFieldsBuilder();
+
+        $fields = $queryProvider->getFields($controller);
+
+        $this->assertCount(1, $fields);
+        $query = $fields['foo'];
+        $this->assertSame('foo', $query->name);
+
+        $resolve = $query->resolveFn;
+        $result = $resolve(new TestTypeWithMagicProperty(), [], null, $this->createMock(ResolveInfo::class));
+
+        $this->assertSame('foo', $result);
+
+        $this->expectException(MissingMagicGetException::class);
+        $this->expectExceptionMessage('You cannot use a @MagicField annotation on an object that does not implement the __get() magic method. The class stdClass must implement a __get() method.');
+        $result = $resolve(new stdClass(), [], null, $this->createMock(ResolveInfo::class));
     }
 }
