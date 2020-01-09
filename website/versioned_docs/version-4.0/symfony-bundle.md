@@ -1,7 +1,8 @@
 ---
-id: symfony-bundle
+id: version-4.0-symfony-bundle
 title: Getting started with Symfony
 sidebar_label: Symfony bundle
+original_id: symfony-bundle
 ---
 
 The GraphQLite bundle is compatible with **Symfony 4.x** and **Symfony 5.x**.
