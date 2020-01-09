@@ -1,7 +1,8 @@
 ---
-id: changelog
+id: version-4.0-changelog
 title: Changelog
 sidebar_label: Changelog
+original_id: changelog
 ---
 
 ## 4.0
