@@ -69,10 +69,10 @@ function Versions(props) {
                     <tr>
                       <th>{version}</th>
                       <td>
-                        <a href={"docs/"+version+"/migrating.html"}>Documentation</a>
+                        <a href={"docs/"+version+"/features.html"}>Documentation</a>
                       </td>
                       <td>
-                        <a href="">Release Notes</a>
+                        <a href={"docs/"+version+"/migrating.html"}>Release Notes</a>
                       </td>
                     </tr>
                   ),

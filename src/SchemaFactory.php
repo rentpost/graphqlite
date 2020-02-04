@@ -94,7 +94,7 @@ class SchemaFactory
     private $classNameMapper;
     /** @var SchemaConfig */
     private $schemaConfig;
-    /** @var int */
+    /** @var int|null */
     private $globTtl = 2;
     /** @var array<int, FieldMiddlewareInterface> */
     private $fieldMiddlewares = [];
@@ -334,7 +334,7 @@ class SchemaFactory
 
         $errorRootTypeMapper = new FinalRootTypeMapper($recursiveTypeMapper);
         $rootTypeMapper = new BaseTypeMapper($errorRootTypeMapper, $recursiveTypeMapper, $topRootTypeMapper);
-        $rootTypeMapper = new MyCLabsEnumTypeMapper($rootTypeMapper);
+        $rootTypeMapper = new MyCLabsEnumTypeMapper($rootTypeMapper, $annotationReader);
 
         if (! empty($this->rootTypeMapperFactories)) {
             $rootSchemaFactoryContext = new RootTypeMapperFactoryContext(
