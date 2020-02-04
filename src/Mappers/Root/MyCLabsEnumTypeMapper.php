@@ -13,25 +13,30 @@ use MyCLabs\Enum\Enum;
 use phpDocumentor\Reflection\DocBlock;
 use phpDocumentor\Reflection\Type;
 use phpDocumentor\Reflection\Types\Object_;
+use ReflectionClass;
 use ReflectionMethod;
+use TheCodingMachine\GraphQLite\AnnotationReader;
+use TheCodingMachine\GraphQLite\Types\MyCLabsEnumType;
 use function is_a;
-use function str_replace;
-use function strpos;
-use function substr;
 
 /**
  * Maps an class extending MyCLabs enums to a GraphQL type
  */
 class MyCLabsEnumTypeMapper implements RootTypeMapperInterface
 {
-    /** @var array<string, EnumType> */
+    /** @var array<class-string<object>, EnumType> */
     private $cache = [];
+    /** @var array<string, EnumType> */
+    private $cacheByName = [];
     /** @var RootTypeMapperInterface */
     private $next;
+    /** @var AnnotationReader */
+    private $annotationReader;
 
-    public function __construct(RootTypeMapperInterface $next)
+    public function __construct(RootTypeMapperInterface $next, AnnotationReader $annotationReader)
     {
         $this->next = $next;
+        $this->annotationReader = $annotationReader;
     }
 
     /**
@@ -73,11 +78,17 @@ class MyCLabsEnumTypeMapper implements RootTypeMapperInterface
         if ($fqsen === null) {
             return null;
         }
+        /**
+         * @var class-string<object>
+         */
         $enumClass = (string) $fqsen;
 
         return $this->mapByClassName($enumClass);
     }
 
+    /**
+     * @param class-string<object> $enumClass
+     */
     private function mapByClassName(string $enumClass): ?EnumType
     {
         if (! is_a($enumClass, Enum::class, true)) {
@@ -87,16 +98,24 @@ class MyCLabsEnumTypeMapper implements RootTypeMapperInterface
             return $this->cache[$enumClass];
         }
 
-        $consts         = $enumClass::toArray();
-        $constInstances = [];
-        foreach ($consts as $key => $value) {
-            $constInstances[$key] = ['value' => $enumClass::$key()];
-        }
+        $type = new MyCLabsEnumType($enumClass, $this->getTypeName($enumClass));
+        return $this->cacheByName[$type->name] = $this->cache[$enumClass] = $type;
+    }
 
-        return $this->cache[$enumClass] = new EnumType([
-            'name' => 'MyCLabsEnum_' . str_replace('\\', '__', $enumClass),
-            'values' => $constInstances,
-        ]);
+    /**
+     * @param class-string<Enum> $enumClass
+     */
+    private function getTypeName(string $enumClass): string
+    {
+        $refClass = new ReflectionClass($enumClass);
+        $enumType = $this->annotationReader->getEnumTypeAnnotation($refClass);
+        if ($enumType !== null) {
+            $name = $enumType->getName();
+            if ($name !== null) {
+                return $name;
+            }
+        }
+        return $refClass->getShortName();
     }
 
     /**
@@ -108,14 +127,20 @@ class MyCLabsEnumTypeMapper implements RootTypeMapperInterface
      */
     public function mapNameToType(string $typeName): NamedType
     {
-        if (strpos($typeName, 'MyCLabsEnum_') === 0) {
+        // This is a hack to make sure "$schema->assertValid()" returns true.
+        // The mapNameToType will fail if the mapByClassName method was not called before.
+        // This is actually not an issue in real life scenarios where enum types are never queried by type name.
+        if (isset($this->cacheByName[$typeName])) {
+            return $this->cacheByName[$typeName];
+        }
+        /*if (strpos($typeName, 'MyCLabsEnum_') === 0) {
             $className = str_replace('__', '\\', substr($typeName, 12));
 
             $type = $this->mapByClassName($className);
             if ($type !== null) {
                 return $type;
             }
-        }
+        }*/
 
         return $this->next->mapNameToType($typeName);
     }
