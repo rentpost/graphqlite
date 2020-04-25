@@ -1,4 +1,5 @@
 parameters:
+    checkGenericClassInNonGenericObjectType: false
     ignoreErrors:
         - "#PHPDoc tag \\@throws with type Psr\\\\Container\\\\ContainerExceptionInterface is not subtype of Throwable#"
         #- "#Property TheCodingMachine\\\\GraphQLite\\\\Types\\\\ResolvableInputObjectType::\\$resolve \\(array<int, object\\|string>&callable\\) does not accept array<int,object\\|string>#"
@@ -29,9 +30,6 @@ parameters:
         -
            message: '#Method TheCodingMachine\\GraphQLite\\AnnotationReader::getMethodAnnotations\(\) should return array<int, T of object> but returns array<object>.#'
            path: src/AnnotationReader.php
-        -
-           message: '#Parameter \#1 \$enumClass of method TheCodingMachine\\GraphQLite\\Mappers\\Root\\MyCLabsEnumTypeMapper::getTypeName\(\) expects class-string<MyCLabs\\Enum\\Enum>, class-string<object> given.#'
-           path: src/Mappers/Root/MyCLabsEnumTypeMapper.php
         - '#Call to an undefined method GraphQL\\Error\\ClientAware::getMessage()#'
         # Needed because of a bug in PHP-CS
         - '#PHPDoc tag @param for parameter \$args with type mixed is not subtype of native type array<int, mixed>.#'
