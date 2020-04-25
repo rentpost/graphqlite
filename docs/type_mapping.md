@@ -255,11 +255,66 @@ class StatusEnum extends Enum
 }
 ```
 
+<div class="alert alert-warning">GraphQLite must be able to find all the classes extending the "MyCLabs\Enum" class
+in your project. By default, GraphQLite will look for "Enum" classes in the namespaces declared for the types. For this 
+reason, <strong>your enum classes MUST be in one of the namespaces declared for the types in your GraphQLite 
+configuration file.</strong></div>
+
 
 <div class="alert alert-info">There are many enumeration library in PHP and you might be using another library.
 If you want to add support for your own library, this is not extremely difficult to do. You need to register a custom
 "RootTypeMapper" with GraphQLite. You can learn more about <em>type mappers</em> in the <a href="internals.md">"internals" documentation</a>
 and <a href="https://github.com/thecodingmachine/graphqlite/blob/master/src/Mappers/Root/MyCLabsEnumTypeMapper.php">copy/paste and adapt the root type mapper used for myclabs/php-enum</a>.</div>
+
+## Deprecation of fields
+
+You can mark a field as deprecated in your GraphQL Schema by just annotating it with the `@deprecated` PHPDoc annotation.
+
+```php
+namespace App\Entities;
+
+use TheCodingMachine\GraphQLite\Annotations\Field;
+use TheCodingMachine\GraphQLite\Annotations\Type;
+
+/**
+ * @Type()
+ */
+class Product
+{
+    // ...
+
+    /**
+     * @Field()
+     */
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    /**
+     * @Field()
+     * @deprecated use field `name` instead
+     */
+    public function getProductName(): string
+    {
+        return $this->name;
+    }
+}
+```
+
+This will add the `@deprecated` directive to the field in the GraphQL Schema which sets the `isDeprecated` field to `true` and adds the reason to the `deprecationReason` field in an introspection query. Fields marked as deprecated can still be queried, but will be returned in an introspection query only if `includeDeprecated` is set to `true`.
+
+```graphql
+query {
+    __type(name: "Product") {
+￼       fields(includeDeprecated: true) {
+￼           name
+￼           isDeprecated
+￼           deprecationReason
+￼       }
+￼   }
+}
+```
 
 ## More scalar types
 

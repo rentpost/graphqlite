@@ -49,6 +49,8 @@ use TheCodingMachine\GraphQLite\Security\SecurityExpressionLanguageProvider;
 use TheCodingMachine\GraphQLite\Types\ArgumentResolver;
 use TheCodingMachine\GraphQLite\Types\TypeResolver;
 use TheCodingMachine\GraphQLite\Utils\NamespacedCache;
+use TheCodingMachine\GraphQLite\Utils\Namespaces\NamespaceFactory;
+use function array_map;
 use function array_reverse;
 use function crc32;
 use function function_exists;
@@ -62,6 +64,8 @@ use function sys_get_temp_dir;
  */
 class SchemaFactory
 {
+    public const GLOB_CACHE_SECONDS = 2;
+
     /** @var string[] */
     private $controllerNamespaces = [];
     /** @var string[] */
@@ -95,15 +99,18 @@ class SchemaFactory
     /** @var SchemaConfig */
     private $schemaConfig;
     /** @var int|null */
-    private $globTtl = 2;
+    private $globTTL = self::GLOB_CACHE_SECONDS;
     /** @var array<int, FieldMiddlewareInterface> */
     private $fieldMiddlewares = [];
     /** @var ExpressionLanguage|null */
     private $expressionLanguage;
+    /** @var string */
+    private $cacheNamespace;
 
     public function __construct(CacheInterface $cache, ContainerInterface $container)
     {
-        $this->cache     = new NamespacedCache($cache);
+        $this->cacheNamespace = substr(md5(Versions::getVersion('thecodingmachine/graphqlite')), 0, 8);
+        $this->cache = $cache;
         $this->container = $container;
     }
 
@@ -206,8 +213,7 @@ class SchemaFactory
 
             $cache = function_exists('apcu_fetch') ? new ApcuCache() : new PhpFileCache(sys_get_temp_dir() . '/graphqlite.' . crc32(__DIR__));
 
-            $namespace = substr(md5(Versions::getVersion('rentpost/graphqlite')), 0, 8);
-            $cache->setNamespace($namespace);
+            $cache->setNamespace($this->cacheNamespace);
 
             $doctrineAnnotationReader = new CachedReader($doctrineAnnotationReader, $cache, true);
 
@@ -257,9 +263,9 @@ class SchemaFactory
      * By default this is set to 2 seconds which is ok for development environments.
      * Set this to "null" (i.e. infinity) for production environments.
      */
-    public function setGlobTtl(?int $globTtl): self
+    public function setGlobTTL(?int $globTTL): self
     {
-        $this->globTtl = $globTtl;
+        $this->globTTL = $globTTL;
 
         return $this;
     }
@@ -267,21 +273,21 @@ class SchemaFactory
     /**
      * Sets GraphQLite in "prod" mode (cache settings optimized for best performance).
      *
-     * This is a shortcut for `$schemaFactory->setGlobTtl(null)`
+     * This is a shortcut for `$schemaFactory->setGlobTTL(null)`
      */
     public function prodMode(): self
     {
-        return $this->setGlobTtl(null);
+        return $this->setGlobTTL(null);
     }
 
     /**
      * Sets GraphQLite in "dev" mode (this is the default mode: cache settings optimized for best developer experience).
      *
-     * This is a shortcut for `$schemaFactory->setGlobTtl(2)`
+     * This is a shortcut for `$schemaFactory->setGlobTTL(2)`
      */
     public function devMode(): self
     {
-        return $this->setGlobTtl(2);
+        return $this->setGlobTTL(self::GLOB_CACHE_SECONDS);
     }
 
     /**
@@ -311,12 +317,18 @@ class SchemaFactory
         $authenticationService = $this->authenticationService ?: new FailAuthenticationService();
         $authorizationService  = $this->authorizationService ?: new FailAuthorizationService();
         $typeResolver          = new TypeResolver();
-        $cachedDocBlockFactory = new CachedDocBlockFactory($this->cache);
+        $namespacedCache       = new NamespacedCache($this->cache);
+        $cachedDocBlockFactory = new CachedDocBlockFactory($namespacedCache);
         $namingStrategy        = $this->namingStrategy ?: new NamingStrategy();
         $typeRegistry          = new TypeRegistry();
+        $symfonyCache          = new Psr16Adapter($this->cache, $this->cacheNamespace);
 
-        $psr6Cache = new Psr16Adapter($this->cache);
-        $expressionLanguage = $this->expressionLanguage ?: new ExpressionLanguage($psr6Cache);
+        $namespaceFactory = new NamespaceFactory($namespacedCache, $this->classNameMapper, $this->globTTL);
+        $nsList = array_map(static function (string $namespace) use ($namespaceFactory) {
+            return $namespaceFactory->createNamespace($namespace);
+        }, $this->typeNamespaces);
+
+        $expressionLanguage = $this->expressionLanguage ?: new ExpressionLanguage($symfonyCache);
         $expressionLanguage->registerProvider(new SecurityExpressionLanguageProvider());
 
         $fieldMiddlewarePipe = new FieldMiddlewarePipe();
@@ -328,13 +340,13 @@ class SchemaFactory
         $fieldMiddlewarePipe->pipe(new AuthorizationFieldMiddleware($authenticationService, $authorizationService));
 
         $compositeTypeMapper = new CompositeTypeMapper();
-        $recursiveTypeMapper = new RecursiveTypeMapper($compositeTypeMapper, $namingStrategy, $this->cache, $typeRegistry);
+        $recursiveTypeMapper = new RecursiveTypeMapper($compositeTypeMapper, $namingStrategy, $namespacedCache, $typeRegistry);
 
         $topRootTypeMapper = new NullableTypeMapperAdapter();
 
         $errorRootTypeMapper = new FinalRootTypeMapper($recursiveTypeMapper);
         $rootTypeMapper = new BaseTypeMapper($errorRootTypeMapper, $recursiveTypeMapper, $topRootTypeMapper);
-        $rootTypeMapper = new MyCLabsEnumTypeMapper($rootTypeMapper, $annotationReader);
+        $rootTypeMapper = new MyCLabsEnumTypeMapper($rootTypeMapper, $annotationReader, $symfonyCache, $nsList);
 
         if (! empty($this->rootTypeMapperFactories)) {
             $rootSchemaFactoryContext = new RootTypeMapperFactoryContext(
@@ -344,7 +356,8 @@ class SchemaFactory
                 $typeRegistry,
                 $recursiveTypeMapper,
                 $this->container,
-                $this->cache
+                $namespacedCache,
+                $this->globTTL
             );
 
             $reversedRootTypeMapperFactories = array_reverse($this->rootTypeMapperFactories);
@@ -388,9 +401,9 @@ class SchemaFactory
             throw new GraphQLRuntimeException('Cannot create schema: no namespace for types found (You must call the SchemaFactory::addTypeNamespace() at least once).');
         }
 
-        foreach ($this->typeNamespaces as $typeNamespace) {
+        foreach ($nsList as $ns) {
             $compositeTypeMapper->addTypeMapper(new GlobTypeMapper(
-                $typeNamespace,
+                $ns,
                 $typeGenerator,
                 $inputTypeGenerator,
                 $inputTypeUtils,
@@ -398,9 +411,8 @@ class SchemaFactory
                 $annotationReader,
                 $namingStrategy,
                 $recursiveTypeMapper,
-                $this->cache,
-                $this->classNameMapper,
-                $this->globTtl
+                $namespacedCache,
+                $this->globTTL
             ));
         }
 
@@ -419,7 +431,8 @@ class SchemaFactory
                 $inputTypeGenerator,
                 $recursiveTypeMapper,
                 $this->container,
-                $this->cache
+                $namespacedCache,
+                $this->globTTL
             );
         }
 
@@ -436,9 +449,9 @@ class SchemaFactory
                 $fieldsBuilder,
                 $this->container,
                 $annotationReader,
-                $this->cache,
+                $namespacedCache,
                 $this->classNameMapper,
-                $this->globTtl
+                $this->globTTL
             );
         }
 

@@ -4,7 +4,7 @@ title: Getting started with Laravel
 sidebar_label: Laravel package
 ---
 
-The GraphQLite-Laravel package is compatible with **Laravel 5.7+** and **Laravel 6.x**.
+The GraphQLite-Laravel package is compatible with **Laravel 5.7+**, **Laravel 6.x** and  **Laravel 7.x**.
 
 ## Installation
 
@@ -137,6 +137,12 @@ $ composer require mll-lab/laravel-graphql-playground
 ```
 
 By default, the playground will be available at `/graphql-playground`.
+
+Or you can install [Altair GraphQL Client](https://github.com/XKojiMedia/laravel-altair-graphql)
+
+```console
+$ composer require xkojimedia/laravel-altair-graphql
+```
 
 You can also use any external client with GraphQLite, make sure to point it to the URL defined in the config (`'/graphql'` by default).
 
