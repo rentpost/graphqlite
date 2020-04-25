@@ -109,7 +109,7 @@ class SchemaFactory
 
     public function __construct(CacheInterface $cache, ContainerInterface $container)
     {
-        $this->cacheNamespace = substr(md5(Versions::getVersion('thecodingmachine/graphqlite')), 0, 8);
+        $this->cacheNamespace = substr(md5(Versions::getVersion('rentpost/graphqlite')), 0, 8);
         $this->cache = $cache;
         $this->container = $container;
     }
